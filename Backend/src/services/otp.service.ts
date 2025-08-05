@@ -1,24 +1,27 @@
 import bcrypt from 'bcryptjs';
 import OTP from '../models/otpModel';
 
-const TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-export const createOtp = async (contact: { email?: string; phone?: string }) => {
+export const generateAndStoreOtp = async (contact: string, mode: 'email' | 'phone') => {
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   const hash = await bcrypt.hash(code, 10);
+  const query = mode === 'email' ? { email: contact } : { phone: contact };
   const doc = await OTP.findOneAndUpdate(
-    contact,
-    { ...contact, otp: hash, createdAt: new Date() },
+    query,
+    mode === 'email'
+      ? { email: contact, otp: hash, createdAt: new Date() }
+      : { phone: contact, otp: hash, createdAt: new Date() },
     { upsert: true, new: true }
   );
-  return { code, doc };
+  return code;
 };
 
-export const validateOtp = async (
-  contact: { email?: string; phone?: string },
-  code: string
+export const verifyOtp = async (
+  contact: string,
+  code: string,
+  mode: 'email' | 'phone'
 ) => {
-  const record = await OTP.findOne(contact);
+  const record = await OTP.findOne(mode === 'email' ? { email: contact } : { phone: contact });
   if (!record) return false;
   const ok = await bcrypt.compare(code, record.otp);
   if (!ok) return false;

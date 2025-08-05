@@ -24,7 +24,7 @@ const twilioClient = twilio(
 const APP_NAME = "PredictaSpend";
 
 // ------------------------ Email ------------------------
-export const sendEmailOTP = async (to: string, code: string) => {
+export const sendEmail = async (to: string, code: string) => {
   const html = `
   <div style="font-family:Helvetica,Arial,sans-serif;max-width:600px;margin:0 auto">
     <h2 style="color:#0d6efd">${APP_NAME} Verification</h2>
@@ -44,7 +44,7 @@ export const sendEmailOTP = async (to: string, code: string) => {
 };
 
 // ------------------------ SMS -------------------------
-export const sendSmsOTP = async (to: string, code: string) => {
+export const sendSms = async (to: string, code: string) => {
   const body = `Your ${APP_NAME} login code is ${code}. It expires in 5 minutes.`;
   await twilioClient.messages.create({
     to,
