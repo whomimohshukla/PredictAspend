@@ -64,8 +64,8 @@ const UserSchema = new Schema<IUser>(
 );
 
 
-UserSchema.index({ phone: 1 });
-UserSchema.index({ email: 1 });
+
+
 
 UserSchema.pre("save", function (next) {
 	

@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import morgan from "morgan";
 import helmet from "helmet";
 import connectDB from "./config/database";
+import authRoutes from "./routes/auth.routes";
 
 const app = express();
 
@@ -20,6 +21,8 @@ app.use(
 	})
 );
 connectDB();
+
+app.use("/api/auth", authRoutes);
 
 app.get("/", (req, res) => {
 	res.send("Hello World!");

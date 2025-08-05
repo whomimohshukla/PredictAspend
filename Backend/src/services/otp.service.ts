@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import OTP from '../models/otpModel';
+import 'dotenv/config'; 
 
 
 export const generateAndStoreOtp = async (contact: string, mode: 'email' | 'phone') => {
