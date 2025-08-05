@@ -25,4 +25,7 @@ const BudgetSchema = new Schema<IBudget>(
 	{ timestamps: true }
 );
 
+// avoid duplicate budgets per category & period
+BudgetSchema.index({ userId: 1, category: 1, period: 1 }, { unique: true });
+
 export default model<IBudget>("Budget", BudgetSchema);

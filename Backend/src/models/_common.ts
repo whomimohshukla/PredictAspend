@@ -23,3 +23,12 @@ export enum Frequency {
 	Monthly = "monthly",
 	Yearly = "yearly",
 }
+
+// how the expense was paid
+export enum PaymentMethod {
+	Cash = "cash",
+	Card = "card",
+	UPI = "upi",
+	BankTransfer = "bank_transfer",
+	Other = "other",
+}

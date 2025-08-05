@@ -1,5 +1,5 @@
 import { Schema, model, Document, Types } from "mongoose";
-import { Category, Frequency } from "./_common";
+import { Category, Frequency, PaymentMethod } from "./_common";
 
 export interface IExpense extends Document {
 	userId: Types.ObjectId;
@@ -7,6 +7,8 @@ export interface IExpense extends Document {
 	category: Category;
 	date: Date;
 	notes?: string;
+	merchant?: string;
+	paymentMethod?: PaymentMethod;
 	recurring?: {
 		isRecurring: boolean;
 		frequency: Frequency;
@@ -37,9 +39,14 @@ const ExpenseSchema = new Schema<IExpense>(
 		category: { type: String, enum: Object.values(Category), required: true },
 		date: { type: Date, default: Date.now },
 		notes: { type: String, maxlength: 280 },
+		merchant: { type: String },
+		paymentMethod: { type: String, enum: Object.values(PaymentMethod) },
 		recurring: RecurringSub,
 	},
 	{ timestamps: true }
 );
+
+// index to speed up date-range queries per user
+ExpenseSchema.index({ userId: 1, date: -1 });
 
 export default model<IExpense>("Expense", ExpenseSchema);

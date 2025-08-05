@@ -7,6 +7,8 @@ export interface IUser extends Document {
 	phone?: string; // optional – E.164, unique
 	name: string;
 	role: UserRole;
+	isVerified: boolean;
+	disabled: boolean;
 
 	// one-time-password support
 	emailOtpHash?: string;
@@ -45,6 +47,9 @@ const UserSchema = new Schema<IUser>(
 		phoneOtpHash: String,
 		otpExpires: Date,
 
+		isVerified: { type: Boolean, default: false },
+		disabled: { type: Boolean, default: false },
+
 		settings: {
 			currency: { type: String, default: "USD" },
 			darkMode: { type: Boolean, default: false },
@@ -53,5 +58,18 @@ const UserSchema = new Schema<IUser>(
 	},
 	{ timestamps: { createdAt: true, updatedAt: false } }
 );
+
+// indexes for faster lookup
+UserSchema.index({ phone: 1 });
+UserSchema.index({ email: 1 });
+
+// Guard: ensure at least one credential exists
+UserSchema.pre("save", function (next) {
+	// @ts-ignore
+	if (!this.email && !this.phone) {
+		return next(new Error("User must have at least an email or phone"));
+	}
+	next();
+});
 
 export default model<IUser>("User", UserSchema);

@@ -6,6 +6,7 @@ export interface IAnomaly extends Document {
 	category: Category;
 	amount: number;
 	threshold: number;
+	severity?: number; // z-score or 0-1 scale
 	periodStart: Date;
 	periodEnd: Date;
 	resolved: boolean;
@@ -22,6 +23,7 @@ const AnomalySchema = new Schema<IAnomaly>(
 		category: { type: String, enum: Object.values(Category), required: true },
 		amount: { type: Number, required: true },
 		threshold: { type: Number, required: true },
+		severity: { type: Number },
 		periodStart: Date,
 		periodEnd: Date,
 		resolved: { type: Boolean, default: false },
