@@ -2,6 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import morgan from "morgan";
 import helmet from "helmet";
+import connectDB from "./config/database";
 
 const app = express();
 
@@ -18,6 +19,7 @@ app.use(
 		crossOriginEmbedderPolicy: false, // turn off specific headers
 	})
 );
+connectDB();
 
 app.get("/", (req, res) => {
 	res.send("Hello World!");
