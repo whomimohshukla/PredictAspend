@@ -74,13 +74,27 @@ export const registerUser = async (req: any, res: any) => {
 				message: "Provide either email or phone number, not both.",
 			});
 		}
-		// Check if user already exists
+		// Check if user already exists (may have been auto-created during OTP verification)
 		const existingUser = await UserModel.findOne({
 			$or: [{ email }, { phone }],
 		});
 
 		if (existingUser) {
-			return res.status(409).json({ message: "User already exists." });
+			// If the user already has a password set, prevent duplicate sign-ups
+			if (existingUser.passwordHash) {
+				return res.status(409).json({ message: "User already exists." });
+			}
+
+			// Otherwise, attach password and return success
+			existingUser.name = name;
+			existingUser.passwordHash = await bcrypt.hash(password, 10);
+			existingUser.isVerified = true;
+			await existingUser.save();
+
+			return res.status(200).json({
+				message: "Password set successfully.",
+				user: existingUser,
+			});
 		}
 
 		// Optional OTP verification (if implemented)
