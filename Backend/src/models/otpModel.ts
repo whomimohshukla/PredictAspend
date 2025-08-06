@@ -1,41 +1,37 @@
 // src/models/otp.model.ts
 import { Schema, model, Document } from "mongoose";
 
-// 1. Define a TypeScript interface for the document
 export interface IOTP extends Document {
-	email?: string; // Optional: user may verify via email or phone
-	phone?: string; // Optional: used for phone verification
-	otp: string;
-	createdAt: Date;
+  email?: string;
+  phone?: string;
+  otp: string;
+  verified: boolean;
+  createdAt: Date;
+  // Remove the automatic expiration and handle it manually
 }
 
-// 2. Define the schema with types
 const OTPSchema = new Schema<IOTP>({
-	email: {
-		type: String,
-		required: false,
-	},
-	phone: {
-		type: String,
-		required: false,
-	},
-	otp: {
-		type: String,
-		required: true,
-	},
-	createdAt: {
-		type: Date,
-		default: Date.now,
-		expires: 300, // 5 minutes
-	},
+  email: { type: String, required: false },
+  phone: { type: String, required: false },
+  otp: { type: String, required: true },
+  verified: { type: Boolean, default: false },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+    // Remove expires: 300 completely
+  },
 });
 
-// 3. Add validation to ensure at least email or phone is provided
+// Add a compound index for better performance
+OTPSchema.index({ email: 1, verified: 1 });
+OTPSchema.index({ phone: 1, verified: 1 });
+OTPSchema.index({ createdAt: 1 }, { expireAfterSeconds: 300 }); // This will be removed for verified OTPs
+
 OTPSchema.pre("save", function (next) {
-	if (!this.email && !this.phone) {
-		return next(new Error("OTP must have either an email or a phone number"));
-	}
-	next();
+  if (!this.email && !this.phone) {
+    return next(new Error("OTP must have either an email or a phone number"));
+  }
+  next();
 });
 
 export default model<IOTP>("OTP", OTPSchema);

@@ -1,131 +1,297 @@
-import OTPModel from "../models/otpModel";
-import UserModel from "../models/User";
-import bcrypt from "bcryptjs";
 
 import { Request, Response } from "express";
 import jwt from "jsonwebtoken";
-
+import UserModel from "../models/User";
+import OTPModel from "../models/otpModel";
 import { asyncHandler } from "../utils/handler";
 import { generateAndStoreOtp, verifyOtp } from "../services/otp.service";
-import { sendSms, sendEmail } from "../services/notify.service";
+import { sendEmail, sendSms } from "../services/notify.service";
 
-const sign = (id: string) =>
-	jwt.sign({ sub: id }, process.env.JWT_SECRET!, { expiresIn: "7d" });
+const signToken = (id: string) =>
+  jwt.sign({ sub: id }, process.env.JWT_SECRET!, { expiresIn: "7d" });
 
+/**
+ * POST /auth/request-otp
+ * Request OTP for login/registration
+ * Body: { email or phone }
+ */
 export const requestOtp = asyncHandler(async (req: Request, res: Response) => {
-	const { email, phone } = req.body;
-	if (!email && !phone)
-		return res.status(400).json({ message: "email or phone required" });
-	if (email && phone)
-		return res.status(400).json({ message: "choose ONE contact method" });
+  const { email, phone } = req.body;
+  
+  if (!email && !phone) {
+    return res.status(400).json({ message: "Email or phone is required." });
+  }
+  
+  if (email && phone) {
+    return res.status(400).json({ message: "Provide only one: email or phone." });
+  }
 
-	const contact = email || phone;
-	const mode: "email" | "phone" = email ? "email" : "phone";
+  const contact = email || phone;
+  const mode: "email" | "phone" = email ? "email" : "phone";
 
-	const code = await generateAndStoreOtp(contact!, mode);
+  try {
+    const code = await generateAndStoreOtp(contact, mode);
+    console.log(`Generated OTP for ${contact}:`, code);
 
-	// deliver
-	if (mode === "phone") await sendSms(contact!, code);
-	else await sendEmail(contact!, code);
+    if (mode === "email") {
+      await sendEmail(contact, code);
+    } else {
+      await sendSms(contact, code);
+    }
 
-	res.status(200).end(); // always 200 to prevent enumeration
+    return res.status(200).json({ 
+      message: "OTP sent successfully.",
+      contact: mode === "email" ? email : phone 
+    });
+  } catch (error) {
+    console.error("Error sending OTP:", error);
+    return res.status(500).json({ message: "Failed to send OTP. Please try again." });
+  }
 });
 
-export const verifyOtpCode = asyncHandler(async (req, res) => {
-	const { email, phone, code, name, password } = req.body;
-	const contact = email || phone;
-	const mode: "email" | "phone" = email ? "email" : "phone";
-	if (!contact || !code)
-		return res.status(400).json({ message: "contact & code required" });
+/**
+ * POST /auth/verify-otp
+ * Verify OTP code (for two-step process)
+ * Body: { email/phone, code }
+ */
+export const verifyOtpCode = asyncHandler(async (req: Request, res: Response) => {
+  const { email, phone, code } = req.body;
+  const contact = email || phone;
+  const mode: "email" | "phone" = email ? "email" : "phone";
 
-	const ok = await verifyOtp(contact, code, mode);
-	if (!ok) return res.status(401).json({ message: "invalid or expired code" });
+  if (!contact || !code) {
+    return res.status(400).json({ message: "Contact and code are required." });
+  }
 
-	// upsert user
-	const user = await UserModel.findOneAndUpdate(
-		mode === "email" ? { email } : { phone },
-		{
-			name,
-			// set password ONLY if provided (email flow)
-			...(password ? { passwordHash: await bcrypt.hash(password, 10) } : {}),
-			isVerified: true,
-		},
-		{ new: true, upsert: true, setDefaultsOnInsert: true }
-	);
+  const valid = await verifyOtp(contact, code, mode);
+  if (!valid) {
+    return res.status(401).json({ message: "Invalid or expired OTP." });
+  }
 
-	res.json({ token: sign(user.id), user });
+  // Create a verified OTP record that won't expire immediately
+  await OTPModel.deleteOne({ [mode]: contact });
+  await OTPModel.create({
+    [mode]: contact,
+    otp: code,
+    verified: true,
+    createdAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // Set to tomorrow to avoid TTL
+  });
+
+  return res.status(200).json({ 
+    message: "OTP verified successfully. You can now complete registration." 
+  });
 });
 
-export const registerUser = async (req: any, res: any) => {
-	try {
-		const { email, phone, name, password } = req.body;
+/**
+ * POST /auth/login
+ * Login existing user with OTP
+ * Body: { email/phone, code }
+ */
+export const loginUser = asyncHandler(async (req: Request, res: Response) => {
+  const { email, phone, code } = req.body;
+  const contact = email || phone;
+  const mode: "email" | "phone" = email ? "email" : "phone";
 
-		// Validate required fields
-		if (!name || !password || (!email && !phone)) {
-			return res.status(400).json({
-				message:
-					"Name, password, and either email or phone number are required.",
-			});
-		}
+  if (!contact || !code) {
+    return res.status(400).json({ message: "Contact and code are required." });
+  }
 
-		// Allow only one: email OR phone
-		if (email && phone) {
-			return res.status(400).json({
-				message: "Provide either email or phone number, not both.",
-			});
-		}
-		// Check if user already exists (may have been auto-created during OTP verification)
-		const existingUser = await UserModel.findOne({
-			$or: [{ email }, { phone }],
-		});
+  // Verify OTP
+  const valid = await verifyOtp(contact, code, mode);
+  if (!valid) {
+    return res.status(401).json({ message: "Invalid or expired OTP." });
+  }
 
-		if (existingUser) {
-			// If the user already has a password set, prevent duplicate sign-ups
-			if (existingUser.passwordHash) {
-				return res.status(409).json({ message: "User already exists." });
-			}
+  // Find existing user
+  const user = await UserModel.findOne({ [mode]: contact });
+  if (!user) {
+    return res.status(404).json({ 
+      message: "User not found. Please register first.",
+      needsRegistration: true 
+    });
+  }
 
-			// Otherwise, attach password and return success
-			existingUser.name = name;
-			existingUser.passwordHash = await bcrypt.hash(password, 10);
-			existingUser.isVerified = true;
-			await existingUser.save();
+  if (user.disabled) {
+    return res.status(403).json({ message: "Account is disabled." });
+  }
 
-			return res.status(200).json({
-				message: "Password set successfully.",
-				user: existingUser,
-			});
-		}
+  // Update user verification status
+  user.isVerified = true;
+  await user.save();
 
-		// Optional OTP verification (if implemented)
-		const contact = email || phone;
-		const otpRecord = await OTPModel.findOne(email ? { email } : { phone });
+  // Clean up OTP
+  await OTPModel.deleteOne({ [mode]: contact });
 
-		if (!otpRecord) {
-			return res
-				.status(400)
-				.json({ message: "OTP not verified. Please verify OTP first." });
-		}
+  const token = signToken(user.id);
 
-		// Hash password
-		const passwordHash = await bcrypt.hash(password, 10);
+  return res.status(200).json({
+    message: "Login successful.",
+    token,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      settings: user.settings,
+    },
+  });
+});
 
-		const userCreated = await UserModel.create({
-			email,
-			phone,
-			name,
-			passwordHash,
-			isVerified: true,
-		});
+/**
+ * POST /auth/register
+ * Register new user (requires verified OTP)
+ * Body: { email/phone, name }
+ */
+export const registerUser = asyncHandler(async (req: Request, res: Response) => {
+  const { email, phone, name } = req.body;
 
-		await OTPModel.deleteOne(email ? { email } : { phone });
+  if (!name || (!email && !phone)) {
+    return res.status(400).json({ message: "Name and contact are required." });
+  }
 
-		res.status(201).json({
-			message: "User created successfully.",
-			user: userCreated,
-		});
-	} catch (error) {
-		console.error("Register error:", error);
-		return res.status(500).json({ message: "Internal server error." });
-	}
-};
+  const contact = email || phone;
+  const mode: "email" | "phone" = email ? "email" : "phone";
+
+  // Check for verified OTP
+  const otpRecord = await OTPModel.findOne({
+    [mode]: contact,
+    verified: true,
+  });
+
+  if (!otpRecord) {
+    return res.status(400).json({ message: "OTP not verified. Please verify OTP first." });
+  }
+
+  // Check if user already exists
+  let user = await UserModel.findOne({ [mode]: contact });
+
+  if (!user) {
+    // Create new user
+    user = await UserModel.create({
+      [mode]: contact,
+      name,
+      isVerified: true,
+    });
+  } else {
+    // Update existing user
+    user.name = name;
+    user.isVerified = true;
+    await user.save();
+  }
+
+  // Clean up OTP
+  await OTPModel.deleteOne({ [mode]: contact });
+
+  const token = signToken(user.id);
+
+  return res.status(201).json({
+    message: "User registered successfully.",
+    token,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      settings: user.settings,
+    },
+  });
+});
+
+/**
+ * POST /auth/verify-and-register
+ * Combined verify OTP and register in one step
+ * Body: { email/phone, code, name }
+ */
+export const verifyAndRegister = asyncHandler(async (req: Request, res: Response) => {
+  const { email, phone, code, name } = req.body;
+  const contact = email || phone;
+  const mode: "email" | "phone" = email ? "email" : "phone";
+
+  if (!contact || !code || !name) {
+    return res.status(400).json({ 
+      message: "Contact, code, and name are required." 
+    });
+  }
+
+  // Verify OTP first
+  const valid = await verifyOtp(contact, code, mode);
+  if (!valid) {
+    return res.status(401).json({ message: "Invalid or expired OTP." });
+  }
+
+  // Proceed with registration
+  let user = await UserModel.findOne({ [mode]: contact });
+
+  if (!user) {
+    user = await UserModel.create({
+      [mode]: contact,
+      name,
+      isVerified: true,
+    });
+  } else {
+    user.name = name;
+    user.isVerified = true;
+    await user.save();
+  }
+
+  // Clean up OTP
+  await OTPModel.deleteOne({ [mode]: contact });
+
+  const token = signToken(user.id);
+
+  return res.status(201).json({
+    message: "User registered successfully.",
+    token,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      settings: user.settings,
+    },
+  });
+});
+
+/**
+ * GET /auth/me
+ * Get current user profile
+ */
+export const getCurrentUser = asyncHandler(async (req: Request, res: Response) => {
+  // Assumes you have auth middleware that sets req.user
+  const userId = (req as any).user?.id;
+  
+  if (!userId) {
+    return res.status(401).json({ message: "Not authenticated." });
+  }
+
+  const user = await UserModel.findById(userId);
+  if (!user) {
+    return res.status(404).json({ message: "User not found." });
+  }
+
+  return res.status(200).json({
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      isVerified: user.isVerified,
+      settings: user.settings,
+      createdAt: user.createdAt,
+    },
+  });
+});
+
+// ================================================================
+// src/middleware/auth.middleware.ts
+
+
+
+
+
+
+
